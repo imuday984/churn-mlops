@@ -1,45 +1,85 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
 from sklearn.metrics import accuracy_score
+import mlflow
+import mlflow.sklearn
 import joblib
 
-# 1. Load Data
-# We refer to the data folder relative to the root
-df = pd.read_csv('data/churn.csv')
+# 1. Start Logging
+with mlflow.start_run():
+    # --- Load Data ---
+    df = pd.read_csv('data/churn.csv')
+    
+    # !!! FIX: Standardize column names !!!
+    # The csv has 'gender', but our list uses 'Gender'. Let's rename it.
+    df.rename(columns={'gender': 'Gender'}, inplace=True)
+    
+    # --- Preprocessing ---
+    # Convert TotalCharges to number
+    df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
+    df = df.dropna() # Drop rows with missing values
+    
+    # Define Features (X) and Target (y)
+    # We drop ID and the Target column
+    # Note: 'Churn' is the target column in the specific CSV linked previously
+    # If your CSV calls it 'Churn_Yes' or something else, change 'Churn' below
+    X = df.drop(columns=['customerID', 'Churn']) 
+    y = df['Churn'].apply(lambda x: 1 if x == 'Yes' else 0)
 
-# 2. Preprocessing (Simple for Phase 1)
-# Convert 'TotalCharges' to numeric, coerce errors to NaN
-df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
-df = df.dropna()
+    # 2. Define "feature groups" for preprocessing
+    # These names MUST match the columns in your CSV exactly
+    numeric_features = ['tenure', 'MonthlyCharges', 'TotalCharges']
+    categorical_features = ['Gender', 'Partner', 'Dependents', 'PhoneService', 
+                            'MultipleLines', 'InternetService', 'OnlineSecurity',
+                            'OnlineBackup', 'DeviceProtection', 'TechSupport',
+                            'StreamingTV', 'StreamingMovies', 'Contract', 
+                            'PaperlessBilling', 'PaymentMethod']
 
-# Drop customerID as it's not a feature
-df = df.drop(columns=['customerID'])
+    # 3. Create a Preprocessing Pipeline
+    # Numeric cols -> Impute missing (avg) -> Scale
+    numeric_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler())
+    ])
 
-# Convert categorical variables into numbers (Yes/No -> 1/0)
-# This is a quick way to handle all string columns
-df = pd.get_dummies(df, drop_first=True)
+    # Categorical cols -> Impute missing -> OneHotEncode
+    categorical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+        ('onehot', OneHotEncoder(handle_unknown='ignore'))
+    ])
 
-# 3. Define X and y
-# Assume 'Churn_Yes' is the target after get_dummies
-X = df.drop(columns=['Churn_Yes']) 
-y = df['Churn_Yes']
+    # Bundle them together
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numeric_features),
+            ('cat', categorical_transformer, categorical_features)
+        ])
 
-# 4. Split Data
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # 4. Create the Final Model Pipeline
+    model_pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('classifier', RandomForestClassifier(n_estimators=100, random_state=42))
+    ])
 
-# 5. Train Model
-print("Training model...")
-model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)
+    # Split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# 6. Evaluate
-predictions = model.predict(X_test)
-accuracy = accuracy_score(y_test, predictions)
+    # Train (The pipeline handles the ugly matrix math for us!)
+    print("Training Pipeline...")
+    model_pipeline.fit(X_train, y_train)
 
-print(f"Model Training Complete.")
-print(f"Accuracy: {accuracy:.4f}")
+    # Evaluate
+    accuracy = model_pipeline.score(X_test, y_test)
+    print(f"Pipeline Accuracy: {accuracy:.4f}")
 
-# 7. Save Model (Legacy method - we will change this later)
-joblib.dump(model, 'model.pkl')
-print("Model saved to model.pkl")
+    # Log Metrics
+    mlflow.log_metric("accuracy", accuracy)
+
+    # Save Model Locally (for the App) and to MLflow
+    joblib.dump(model_pipeline, 'model.pkl')
+    mlflow.sklearn.log_model(model_pipeline, "model")
