@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pkl
+.DS_Store
+
+# Ignore the actual data (DVC handles it)
+data/churn.csv
