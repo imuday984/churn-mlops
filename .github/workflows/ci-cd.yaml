@@ -1,0 +1,40 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  train-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Get the code from the repo
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    # 2. Set up Python
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    # 3. Install dependencies
+    - name: Install Dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+
+    # 4. Train the Model (Automatic Retraining!)
+    - name: Train Model
+      run: |
+        python src/train.py
+
+    # 5. Build Docker Image (Verify it builds)
+    - name: Build Docker Container
+      run: |
+        docker build -t churn-model:latest .
+
+    # (Optional) Future Step: Deploy to Cloud
+    # - name: Deploy
+    #   run: echo "Deploy step goes here!"
